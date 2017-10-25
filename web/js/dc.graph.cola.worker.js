@@ -303,7 +303,7 @@ dc_graph.cola_layout = function(id) {
         });
 
         var groups = null;
-        if(options.groupConnected) {
+        if(engine.groupConnected()) {
             var components = cola.separateGraphs(wnodes, wedges);
             groups = components.map(function(g) {
                 return {leaves: g.array.map(function(n) { return n.index; })};
@@ -331,11 +331,11 @@ dc_graph.cola_layout = function(id) {
             .groups(groups);
     }
 
-    function start(options) {
-        _d3cola.start(options.initialUnconstrainedIterations,
-                      options.initialUserConstraintIterations,
-                      options.initialAllConstraintsIterations,
-                      options.gridSnapIterations);
+    function start() {
+        _d3cola.start(engine.unconstrainedIterations(),
+                      engine.userConstraintIterations(),
+                      engine.allConstraintsIterations(),
+                      engine.gridSnapIterations());
     }
 
     function stop() {
@@ -373,14 +373,14 @@ dc_graph.cola_layout = function(id) {
         data: function(nodes, edges, constraints, options) {
             data(nodes, edges, constraints, options);
         },
-        start: function(options) {
-            start(options);
+        start: function() {
+            start();
         },
         stop: function() {
             stop();
         },
         optionNames: function() {
-            return ['handleDisconnected', 'lengthStrategy', 'baseLength', 'flowLayout', 'tickSize']
+            return ['handleDisconnected', 'lengthStrategy', 'baseLength', 'flowLayout', 'tickSize', 'groupConnected']
                 .concat(graphviz_keys);
         },
         populateLayoutNode: function() {},
@@ -454,7 +454,12 @@ dc_graph.cola_layout = function(id) {
             _flowLayout = flow;
             return this;
         },
-        tickSize: property(1)
+        unconstrainedIterations: property(10),
+        userConstraintIterations: property(20),
+        allConstraintsIterations: property(20),
+        gridSnapIterations: property(0),
+        tickSize: property(1),
+        groupConnected: property(false)
     });
     return engine;
 };
@@ -506,7 +511,7 @@ onmessage = function(e) {
         //     _done();
         // }
         // else
-        _layouts[args.layoutId].start(args.options);
+        _layouts[args.layoutId].start();
         break;
     case 'stop':
         if(_layouts)

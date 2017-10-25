@@ -504,57 +504,86 @@ function point_on_polygon(points, x0, y0, x1, y1) {
 
 // as many as we can get from
 // http://www.graphviz.org/doc/info/shapes.html
-var dc_graph_shapes_ = {
-    ellipse: function() {
-        return {shape: 'ellipse'};
+dc_graph.shape_presets = {
+    egg: {
+        // not really: an ovoid should be two half-ellipses stuck together
+        // https://en.wikipedia.org/wiki/Oval
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 100, distortion: -0.25};
+        }
     },
-    egg: function() {
-        return {shape: 'polygon', sides: 100, distortion: -0.25};
+    triangle: {
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 3};
+        }
     },
-    triangle: function() {
-        return {shape: 'polygon', sides: 3};
+    rectangle: {
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 4};
+        }
     },
-    rectangle: function() {
-        return {shape: 'polygon', sides: 4};
+    diamond: {
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 4, rotation: 45};
+        }
     },
-    diamond: function() {
-        return {shape: 'polygon', sides: 4, rotation: 45};
+    trapezium: {
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 4, distortion: -0.5};
+        }
     },
-    trapezium: function() {
-        return {shape: 'polygon', sides: 4, distortion: -0.5};
+    parallelogram: {
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 4, skew: 0.5};
+        }
     },
-    parallelogram: function() {
-        return {shape: 'polygon', sides: 4, skew: 0.5};
+    pentagon: {
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 5};
+        }
     },
-    pentagon: function() {
-        return {shape: 'polygon', sides: 5};
+    hexagon: {
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 6};
+        }
     },
-    hexagon: function() {
-        return {shape: 'polygon', sides: 6};
+    septagon: {
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 7};
+        }
     },
-    septagon: function() {
-        return {shape: 'polygon', sides: 7};
+    octagon: {
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 8};
+        }
     },
-    octagon: function() {
-        return {shape: 'polygon', sides: 8};
+    invtriangle: {
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 3, rotation: 180};
+        }
     },
-    invtriangle: function() {
-        return {shape: 'polygon', sides: 3, rotation: 180};
+    invtrapezium: {
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 4, distortion: 0.5};
+        }
     },
-    invtrapezium: function() {
-        return {shape: 'polygon', sides: 4, distortion: 0.5};
-    },
-    square: function() {
-        return {shape: 'polygon', sides: 4};
-    },
-    polygon: function(def) {
-        return {
-            shape: 'polygon',
-            sides: def.sides,
-            skew: def.skew,
-            distortion: def.distortion,
-            rotation: def.rotation
-        };
+    square: {
+        generator: 'polygon',
+        preset: function() {
+            return {sides: 4};
+        }
     }
 };
 
@@ -566,16 +595,21 @@ dc_graph.available_shapes = function() {
 var default_shape = {shape: 'ellipse'};
 
 function elaborate_shape(chart, def) {
-    var shape = def.shape;
-    if(def.shape === 'random') {
+    var shape = def.shape, def2 = Object.assign({}, def);
+    delete def2.shape;
+    if(shape === 'random') {
         var available = dc_graph.available_shapes(); // could include chart.shape !== ellipse, polygon
         shape = available[Math.floor(Math.random()*available.length)];
     }
-    else if(chart.shape.enum().indexOf(def.shape) !== -1)
-        return chart.shape(def.shape).elaborate(def);
-    if(!dc_graph_shapes_[shape])
-        throw new Error('unknown shape ' + shape);
-    return dc_graph_shapes_[shape](def);
+    else if(chart.shape.enum().indexOf(shape) !== -1)
+        return chart.shape(shape).elaborate({shape: shape}, def2);
+    if(!dc_graph.shape_presets[shape]) {
+        console.warn('unknown shape ', shape);
+        shape = 'rectangle';
+    }
+    var preset = dc_graph.shape_presets[shape].preset(def2);
+    preset.shape = dc_graph.shape_presets[shape].generator;
+    return chart.shape(preset.shape).elaborate(preset, def2);
 }
 
 function infer_shape(chart) {
@@ -646,7 +680,8 @@ function ellipse_attrs(chart) {
 function polygon_attrs(chart, d) {
     return {
         d: function(d) {
-            var def = d.dcg_shape,
+            var rx = d.dcg_rx, ry = d.dcg_ry,
+                def = d.dcg_shape,
                 sides = def.sides || 4,
                 skew = def.skew || 0,
                 distortion = def.distortion || 0,
@@ -659,12 +694,14 @@ function polygon_attrs(chart, d) {
                 angles.push({x: Math.cos(theta), y: Math.sin(theta)});
             }
             var yext = d3.extent(angles, function(theta) { return theta.y; });
-            var rx = d.dcg_rx,
-                ry = d.dcg_ry / Math.min(-yext[0], yext[1]);
+            if(def.regular)
+                rx = ry = Math.max(rx, ry);
+            else
+                ry = ry / Math.min(-yext[0], yext[1]);
             d.dcg_points = angles.map(function(theta) {
                 var x = rx*theta.x,
                     y = ry*theta.y;
-                x *= 1 + distortion*((d.dcg_ry-y)/d.dcg_ry - 1);
+                x *= 1 + distortion*((ry-y)/ry - 1);
                 x -= skew*y/2;
                 return {x: x, y: y};
             });
@@ -813,8 +850,8 @@ function bezier_point(points, t_) {
 dc_graph.ellipse_shape = function() {
     var _shape = {
         parent: property(null),
-        elaborate: function(def) {
-            return dc_graph_shapes_.ellipse(def);
+        elaborate: function(preset, def) {
+            return Object.assign(preset, def);
         },
         intersect_vec: function(d, deltaX, deltaY) {
             return point_on_ellipse(d.dcg_rx, d.dcg_ry, deltaX, deltaY);
@@ -852,8 +889,8 @@ dc_graph.ellipse_shape = function() {
 dc_graph.polygon_shape = function() {
     var _shape = {
         parent: property(null),
-        elaborate: function(def) {
-            return dc_graph_shapes_.polygon(def);
+        elaborate: function(preset, def) {
+            return Object.assign(preset, def);
         },
         intersect_vec: function(d, deltaX, deltaY) {
             return point_on_polygon(d.dcg_points, 0, 0, deltaX, deltaY);
@@ -891,12 +928,9 @@ dc_graph.rounded_rectangle_shape = function() {
     var _polygon = dc_graph.polygon_shape();
     var _shape = {
         parent: property(null),
-        elaborate: function(def) {
-            return {
-                shape: def.shape,
-                rx: def.rx || 10,
-                ry: def.ry || 10
-            };
+        elaborate: function(preset, def) {
+            preset = Object.assign({rx: 10, ry: 10}, preset);
+            return Object.assign(preset, def);
         },
         intersect_vec: function(d, deltaX, deltaY) {
             var points = [
@@ -1058,9 +1092,10 @@ dc_graph.diagram = function (parent, chartGroup) {
     var _chart = dc.marginMixin({});
     _chart.__dcFlag__ = dc.utils.uniqueId();
     var _svg = null, _defs = null, _g = null, _nodeLayer = null, _edgeLayer = null;
-    var _dispatch = d3.dispatch('data', 'end', 'start', 'drawn', 'transitionsStarted', 'zoomed');
+    var _dispatch = d3.dispatch('preDraw', 'data', 'end', 'start', 'drawn', 'receivedLayout', 'transitionsStarted', 'zoomed');
     var _nodes = {}, _edges = {}; // hold state between runs
     var _ports = {}; // id = node|edge/id/name
+    var _nodePorts; // ports sorted by node id
     var _stats = {};
     var _nodes_snapshot, _edges_snapshot;
     var _arrows = {};
@@ -1092,10 +1127,16 @@ dc_graph.diagram = function (parent, chartGroup) {
             if(engine.getEngine)
                 engine = engine.getEngine();
             if(engine[name]) {
-                console.warn('Warning: dc_graph.diagram."' + name + '"is deprecated. Call the corresponding method on the layout engine instead.');
+                console.warn('property is deprecated, call on layout engine instead: dc_graph.diagram.%c' + name,
+                             'font-weight: bold');
+                if(!arguments.length)
+                    return engine[name]();
                 engine[name](value);
-            } else
-                console.warn('Warning: dc_graph.diagram."' + name + '"is deprecated, and it is not supported for the "' + engine.layoutAlgorithm() + '" layout algorithm: ignored.');
+            } else {
+                console.warn('property is deprecated, and is not supported for Warning: dc_graph.diagram.<b>' + name + '</b> is deprecated, and it is not supported for the "' + engine.layoutAlgorithm() + '" layout algorithm: ignored.');
+                if(!arguments.length)
+                    return null;
+            }
             return this;
         };
     }
@@ -1573,12 +1614,12 @@ dc_graph.diagram = function (parent, chartGroup) {
      * @example
      * // Default behavior
      * chart.nodeTitle(function(kv) {
-     *   return _chart.nodeKeyAccessor()(kv);
+     *   return _chart.nodeKey()(kv);
      * });
      * @return {dc_graph.diagram}
      **/
     _chart.nodeTitle = _chart.nodeTitleAccessor = property(function(kv) {
-        return _chart.nodeKeyAccessor()(kv);
+        return _chart.nodeKey()(kv);
     });
 
     /**
@@ -1861,7 +1902,7 @@ dc_graph.diagram = function (parent, chartGroup) {
      * @return {String}
      * @return {dc_graph.diagram}
      **/
-    _chart.groupConnected = property(false);
+    _chart.groupConnected = deprecate_layout_algo_parameter('groupConnected');
 
     /**
      * Gets or sets the maximum time spent doing layout for a render or redraw. Set to 0 for no
@@ -2118,6 +2159,9 @@ dc_graph.diagram = function (parent, chartGroup) {
             val.parent(_chart);
     });
 
+    // S-spline any edges that are not going in this direction
+    _chart.enforceEdgeDirection = property(null);
+
     _chart.tickSize = deprecate_layout_algo_parameter('tickSize');
 
 
@@ -2150,9 +2194,17 @@ dc_graph.diagram = function (parent, chartGroup) {
         return _edges[id] ? _edges[id].orig : null;
     };
 
+    _chart.getWholeEdge = function(id) {
+        return _edges[id] ? _edges[id] : null;
+    };
+
     // again, awful, we need an ADT
     _chart.getPort = function(nid, eid, name) {
         return _ports[port_name(nid, eid, name)];
+    };
+
+    _chart.nodePorts = function() {
+        return _nodePorts;
     };
 
     /**
@@ -2309,10 +2361,11 @@ dc_graph.diagram = function (parent, chartGroup) {
         }
         _running = true;
 
-        _chart.layoutEngine().stop();
-
         if(_chart.initLayoutOnRedraw())
             initLayout();
+
+        _chart.layoutEngine().stop();
+        _dispatch.preDraw();
 
         // ordering shouldn't matter, but we support ordering in case it does
         if(_chart.nodeOrdering()) {
@@ -2365,16 +2418,22 @@ dc_graph.diagram = function (parent, chartGroup) {
                 return port_name(_chart.edgeTarget.eval(e), null, _chart.edgeTargetPortName.eval(e));
             else return port_name(null, _chart.edgeKey.eval(e), 'target');
         }));
+        // remove any invalid ports so they don't crash in confusing ways later
+        ports = ports.filter(function(p) {
+            return _chart.portNodeKey() && _chart.portNodeKey()(p) ||
+                _chart.portEdgeKey() && _chart.portEdgeKey()(p);
+        });
         var wports = regenerate_objects(_ports, ports, needports, function(p) {
-            return port_name(_chart.portNodeKey()(p),
-                             _chart.portEdgeKey() && _chart.portEdgeKey(p),
+            return port_name(_chart.portNodeKey() && _chart.portNodeKey()(p),
+                             _chart.portEdgeKey() && _chart.portEdgeKey()(p),
                              _chart.portName()(p));
         }, function(p1, p) {
             p1.orig = p;
             if(p1.named)
                 p1.edges = [];
         }, function(k, p) {
-            // this is dumb. as usual, i blame the lack of metagraphs
+            console.assert(k, 'should have screened out invalid ports');
+            // it's dumb to parse the id we just created. as usual, i blame the lack of metagraphs
             var parse = split_port_name(k);
             if(parse.nodeKey) {
                 p.node = _nodes[parse.nodeKey];
@@ -2388,6 +2447,9 @@ dc_graph.diagram = function (parent, chartGroup) {
             }
             p.name = parse.name;
         });
+        // remove any ports where the end-node was not found, to avoid crashing elsewhere
+        wports = wports.filter(function(p) { return p.node; });
+
         // find all edges for named ports
         wedges.forEach(function(e) {
             var name = _chart.edgeSourcePortName.eval(e);
@@ -2428,19 +2490,26 @@ dc_graph.diagram = function (parent, chartGroup) {
         // annotate parallel edges so we can draw them specially
         if(_chart.parallelEdgeOffset()) {
             var em = new Array(wnodes.length);
-            for(var i = 0; i < wnodes.length; ++i) {
-                em[i] = new Array(wnodes.length); // technically could be diagonal array
-                for(var j = 0; j < wnodes.length; ++j)
-                    em[i][j] = {
-                        rev: [],
-                        edges: []
-                    };
-            }
+            for(var i = 0; i < wnodes.length; ++i)
+                em[i] = new Array(i);
             wedges.forEach(function(e) {
                 e.pos = e.pos || {};
-                var min = Math.min(e.source.index, e.target.index),
-                    max = Math.max(e.source.index, e.target.index);
-                e.parallel = em[min][max];
+                var min, max, minattr, maxattr;
+                if(e.source.index < e.target.index) {
+                    min = e.source.index; max = e.target.index;
+                    minattr = 'edgeSourcePortName'; maxattr = 'edgeTargetPortName';
+                } else {
+                    max = e.source.index; min = e.target.index;
+                    maxattr = 'edgeSourcePortName'; minattr = 'edgeTargetPortName';
+                }
+                var minport = _chart[minattr].eval(e) || 'no port',
+                    maxport = _chart[maxattr].eval(e) || 'no port';
+                em[max][min] = em[max][min] || {};
+                em[max][min][maxport] = em[max][min][maxport] || {};
+                e.parallel = em[max][min][maxport][minport] = em[max][min][maxport][minport] || {
+                    rev: [],
+                    edges: []
+                };
                 e.parallel.edges.push(e);
                 e.parallel.rev.push(min !== e.source.index);
             });
@@ -2474,6 +2543,7 @@ dc_graph.diagram = function (parent, chartGroup) {
         var edgeHoverEnter = edgeHover.enter().append('svg:path')
             .attr('class', 'edge-hover')
             .attr('opacity', 0)
+            .attr('fill', 'none')
             .attr('stroke', 'green')
             .attr('stroke-width', 10)
             .on('mouseover', function(d) {
@@ -2501,7 +2571,8 @@ dc_graph.diagram = function (parent, chartGroup) {
                 .attr('startOffset', '50%')
                 .attr('xlink:href', function(d) {
                     var id = _chart.textpathId(d);
-                    return '#' + id;
+                    // angular on firefox needs absolute paths for fragments
+                    return window.location.href.split('#')[0] + '#' + id;
                 });
         var textPaths = _defs.selectAll('path.edge-label-path')
                 .data(wedges, _chart.textpathId);
@@ -2677,13 +2748,11 @@ dc_graph.diagram = function (parent, chartGroup) {
                 if(!_chart.initialOnly())
                     populate_cola(nodes, edges);
                 if(_chart.showLayoutSteps()) {
-                    var nodePorts;
-                    // what's the relation between this and the 'data' event?
-                    if(_chart.layoutEngine().needsStage && _chart.layoutEngine().needsStage('ports'))
-                        nodePorts = dc_graph.place_ports(_chart, _nodes, wnodes, _edges, wedges, _ports, wports);
+                    init_node_ports(_nodes, wports);
+                    _dispatch.receivedLayout(_chart, _nodes, wnodes, _edges, wedges, _ports, wports);
+                    propagate_port_positions(_nodes, wedges, _ports);
                     draw(node, nodeEnter, edge, edgeEnter, edgeHover, edgeHoverEnter, edgeLabels, edgeLabelsEnter, textPaths, textPathsEnter, true);
-                    if(nodePorts)
-                        draw_ports(nodePorts, node);
+                    draw_ports(node);
                     // should do this only once
                     _dispatch.transitionsStarted(node, edge, edgeHover);
                 }
@@ -2694,14 +2763,13 @@ dc_graph.diagram = function (parent, chartGroup) {
             })
             .on('end', function(nodes, edges) {
                 if(!_chart.showLayoutSteps()) {
-                    var nodePorts;
                     if(!_chart.initialOnly())
                         populate_cola(nodes, edges);
-                    if(_chart.layoutEngine().needsStage && _chart.layoutEngine().needsStage('ports'))
-                        nodePorts = dc_graph.place_ports(_chart, _nodes, wnodes, _edges, wedges, _ports, wports);
+                    init_node_ports(_nodes, wports);
+                    _dispatch.receivedLayout(_chart, _nodes, wnodes, _edges, wedges, _ports, wports);
+                    propagate_port_positions(_nodes, wedges, _ports);
                     draw(node, nodeEnter, edge, edgeEnter, edgeHover, edgeHoverEnter, edgeLabels, edgeLabelsEnter, textPaths, textPathsEnter, true);
-                    if(nodePorts)
-                        draw_ports(nodePorts, node);
+                    draw_ports(node);
                     _dispatch.transitionsStarted(node, edge, edgeHover);
                 }
                 else layout_done(true);
@@ -2733,17 +2801,68 @@ dc_graph.diagram = function (parent, chartGroup) {
             _chart.layoutEngine().data(
                 wnodes.map(function(v) { return v.cola; }),
                 layout_edges.map(function(v) { return v.cola; }),
-                constraints,
-                {groupConnected: _chart.groupConnected()}
+                constraints
             );
-            _chart.layoutEngine().start({
-                initialUnconstrainedIterations: 10,
-                initialUserConstraintIterations: 20,
-                initialAllConstraintsIterations: 20
-            });
+            _chart.layoutEngine().start();
         }
         return this;
     };
+
+    function norm(v) {
+        var len = Math.hypot(v[0], v[1]);
+        return [v[0]/len, v[1]/len];
+    }
+    function edge_vec(n, e) {
+        var dy = e.target.cola.y - e.source.cola.y,
+            dx = e.target.cola.x - e.source.cola.x;
+        if(e.source !== n)
+            dy = -dy, dx = -dx;
+        return norm([dx, dy]);
+    }
+    function init_node_ports(nodes, wports) {
+        _nodePorts = {};
+        // assemble port-lists for nodes, again because we don't have a metagraph.
+        wports.forEach(function(p) {
+            var nid = _chart.nodeKey.eval(p.node);
+            var np = _nodePorts[nid] = _nodePorts[nid] || [];
+            np.push(p);
+        });
+        for(var nid in _nodePorts) {
+            var n = nodes[nid],
+                nports = _nodePorts[nid];
+            // initial positions: use average of edge vectors, if any, or existing position
+            nports.forEach(function(p) {
+                if(p.edges.length) {
+                    var vecs = p.edges.map(edge_vec.bind(null, n));
+                    p.vec = [
+                        d3.sum(vecs, function(v) { return v[0]; })/vecs.length,
+                        d3.sum(vecs, function(v) { return v[1]; })/vecs.length
+                    ];
+                } else p.vec = p.vec || undefined;
+                p.pos = null;
+            });
+        }
+    }
+    function propagate_port_positions(nodes, wedges, ports) {
+        // make sure we have projected vectors to positions
+        for(var nid in _nodePorts) {
+            var n = nodes[nid];
+            _nodePorts[nid].forEach(function(p) {
+                if(!p.pos)
+                    project_port(_chart, n, p);
+            });
+        }
+
+        // propagate port positions to edge endpoints
+        wedges.forEach(function(e) {
+            var name = _chart.edgeSourcePortName.eval(e);
+            e.sourcePort.pos = name ? ports[port_name(_chart.nodeKey.eval(e.source), null, name)].pos :
+                ports[port_name(null, _chart.edgeKey.eval(e), 'source')].pos;
+            name = _chart.edgeTargetPortName.eval(e);
+            e.targetPort.pos = name ? ports[port_name(_chart.nodeKey.eval(e.target), null, name)].pos :
+                ports[port_name(null, _chart.edgeKey.eval(e), 'target')].pos;
+        });
+    }
 
     function _refresh(node, edge) {
         edge
@@ -2766,6 +2885,7 @@ dc_graph.diagram = function (parent, chartGroup) {
             });
 
         _chart._updateNode(node);
+        draw_ports(node);
     }
 
     _chart.refresh = function(node, edge, edgeHover, edgeLabels, textPaths) {
@@ -2826,6 +2946,44 @@ dc_graph.diagram = function (parent, chartGroup) {
                 Math.atan2(partial.y - spos.y, partial.x - spos.x)) + 'rad';
     }
 
+    function enforce_path_direction(path, spos, tpos) {
+        var points = path.points, first = points[0], last = points[points.length-1];
+        switch(_chart.enforceEdgeDirection()) {
+        case 'LR':
+            if(spos.x >= tpos.x) {
+                var dx = first.x - last.x;
+                return {
+                    points: [
+                        first,
+                        {x: first.x + dx, y: first.y - dx/2},
+                        {x: last.x - dx, y: last.y - dx/2},
+                        last
+                    ],
+                    bezDegree: 3,
+                    sourcePort: path.sourcePort,
+                    targetPort: path.targetPort
+                };
+            }
+            break;
+        case 'TB':
+            if(spos.y >= tpos.y) {
+                var dy = first.y - last.y;
+                return {
+                    points: [
+                        first,
+                        {x: first.x + dy/2, y: first.y + dy},
+                        {x: last.x + dy/2, y: last.y - dy},
+                        last
+                    ],
+                    bezDegree: 3,
+                    sourcePort: path.sourcePort,
+                    targetPort: path.targetPort
+                };
+            }
+            break;
+        }
+        return path;
+    }
     function calc_edge_path(d, age, sx, sy, tx, ty) {
         if(d.cola.points) {
             // just to be clear, this is not a great way to populate old/new
@@ -2861,8 +3019,10 @@ dc_graph.diagram = function (parent, chartGroup) {
                                               last, dir, _chart.parallelEdgeOffset(),
                                               source_padding, target_padding
                                               );
-                if(parallel.rev[p])
+                if(parallel.edges.length > 1 && parallel.rev[p])
                     path.points.reverse();
+                if(_chart.enforceEdgeDirection())
+                    path = enforce_path_direction(path, source.cola, target.cola);
                 parallel.edges[p].pos[age] = {
                     path: path,
                     orienthead: calculate_arrowhead_orientation(path.points, 'head'),
@@ -3194,11 +3354,13 @@ dc_graph.diagram = function (parent, chartGroup) {
             edgeHover.attr('d', render_edge_path('new'));
     }
 
-    function draw_ports(nodePorts, node) {
+    function draw_ports(node) {
+        if(!_nodePorts)
+            return;
         _chart.portStyle.enum().forEach(function(style) {
             var nodePorts2 = {};
-            for(var nid in nodePorts)
-                nodePorts2[nid] = nodePorts[nid].filter(function(p) {
+            for(var nid in _nodePorts)
+                nodePorts2[nid] = _nodePorts[nid].filter(function(p) {
                     return _chart.portStyleName.eval(p) === style;
                 });
             _chart.portStyle(style).drawPorts(nodePorts2, node);
@@ -3813,12 +3975,11 @@ dc_graph.webworker_layout = function(layoutEngine) {
             }
         });
     };
-    engine.start = function(options) {
+    engine.start = function() {
         _worker.worker.postMessage({
             command: 'start',
             args: {
-                layoutId: layoutEngine.layoutId(),
-                options: options
+                layoutId: layoutEngine.layoutId()
             }
         });
     };
@@ -3976,7 +4137,7 @@ dc_graph.cola_layout = function(id) {
         });
 
         var groups = null;
-        if(options.groupConnected) {
+        if(engine.groupConnected()) {
             var components = cola.separateGraphs(wnodes, wedges);
             groups = components.map(function(g) {
                 return {leaves: g.array.map(function(n) { return n.index; })};
@@ -4004,11 +4165,11 @@ dc_graph.cola_layout = function(id) {
             .groups(groups);
     }
 
-    function start(options) {
-        _d3cola.start(options.initialUnconstrainedIterations,
-                      options.initialUserConstraintIterations,
-                      options.initialAllConstraintsIterations,
-                      options.gridSnapIterations);
+    function start() {
+        _d3cola.start(engine.unconstrainedIterations(),
+                      engine.userConstraintIterations(),
+                      engine.allConstraintsIterations(),
+                      engine.gridSnapIterations());
     }
 
     function stop() {
@@ -4046,14 +4207,14 @@ dc_graph.cola_layout = function(id) {
         data: function(nodes, edges, constraints, options) {
             data(nodes, edges, constraints, options);
         },
-        start: function(options) {
-            start(options);
+        start: function() {
+            start();
         },
         stop: function() {
             stop();
         },
         optionNames: function() {
-            return ['handleDisconnected', 'lengthStrategy', 'baseLength', 'flowLayout', 'tickSize']
+            return ['handleDisconnected', 'lengthStrategy', 'baseLength', 'flowLayout', 'tickSize', 'groupConnected']
                 .concat(graphviz_keys);
         },
         populateLayoutNode: function() {},
@@ -4127,7 +4288,12 @@ dc_graph.cola_layout = function(id) {
             _flowLayout = flow;
             return this;
         },
-        tickSize: property(1)
+        unconstrainedIterations: property(10),
+        userConstraintIterations: property(20),
+        allConstraintsIterations: property(20),
+        gridSnapIterations: property(0),
+        tickSize: property(1),
+        groupConnected: property(false)
     });
     return engine;
 };
@@ -4247,8 +4413,8 @@ dc_graph.dagre_layout = function(id) {
         data: function(nodes, edges, constraints, options) {
             data(nodes, edges, constraints, options);
         },
-        start: function(options) {
-            start(options);
+        start: function() {
+            start();
         },
         stop: function() {
             stop();
@@ -4372,7 +4538,7 @@ dc_graph.tree_layout = function(id) {
         _edges = edges;
     }
 
-    function start(options) {
+    function start() {
         _dfs(_nodes, _edges);
         _dispatch.end(_nodes, _edges);
     }
@@ -4404,8 +4570,8 @@ dc_graph.tree_layout = function(id) {
         data: function(nodes, edges, constraints, opts) {
             data(nodes, edges, constraints, opts);
         },
-        start: function(options) {
-            start(options);
+        start: function() {
+            start();
         },
         stop: function() {
             stop();
@@ -4518,7 +4684,7 @@ dc_graph.graphviz_layout = function(id, layout, server) {
         _dispatch.end(nodes, edges);
     }
 
-    function start(options) {
+    function start() {
         if(server) {
             d3.json(server)
                 .header("Content-type", "application/x-www-form-urlencoded")
@@ -4559,8 +4725,8 @@ dc_graph.graphviz_layout = function(id, layout, server) {
         data: function(nodes, edges, constraints, options) {
             data(nodes, edges, constraints, options);
         },
-        start: function(options) {
-            start(options);
+        start: function() {
+            start();
         },
         stop: function() {
             stop();
@@ -4575,6 +4741,8 @@ dc_graph.graphviz_layout = function(id, layout, server) {
 
 
 function port_name(nodeId, edgeId, portName) {
+    if(!(nodeId || edgeId))
+        return null; // must have one key or the other
     return (nodeId ? 'node/' + nodeId : 'edge/' + edgeId) + '/' + portName;
 };
 function split_port_name(portname) {
@@ -4589,105 +4757,332 @@ function split_port_name(portname) {
         name: parts[2]
     };
 }
+function project_port(diagram, n, p) {
+    p.pos = diagram.shape(n.dcg_shape.shape).intersect_vec(n, p.vec[0]*1000, p.vec[1]*1000);
+}
 
-dc_graph.place_ports = function(diagram, nodes, wnodes, edges, wedges, ports, wports) {
-    var node_ports = {};
+dc_graph.place_ports = function() {
+    function received_layout(diagram, nodes, wnodes, edges, wedges, ports, wports) {
+        var node_ports = diagram.nodePorts();
 
-    // assemble port-lists for nodes, again because we don't have a metagraph.
-    wports.forEach(function(p) {
-        var nid = diagram.nodeKey.eval(p.node);
-        var np = node_ports[nid] = node_ports[nid] || [];
-        np.push(p);
-    });
+        function is_ccw(u, v) {
+            return u[0]*v[1] - u[1]*v[0] > 0;
+        }
+        function in_bounds(v, bounds) {
+            // assume bounds are ccw
+            return is_ccw(bounds[0], v) && is_ccw(v, bounds[1]);
+        }
+        function clip(v, bounds) {
+            if(is_ccw(v, bounds[0]))
+                return bounds[0];
+            else if(is_ccw(bounds[1], v))
+                return bounds[1];
+            else return v;
+        }
+        function a_to_v(a) {
+            return [Math.cos(a), Math.sin(a)];
+        }
+        function v_to_a(v) {
+            return Math.atan2(v[1], v[0]);
+        }
+        function distance(p, p2) {
+            return Math.hypot(p2.pos.x - p.pos.x, p2.pos.y - p.pos.y);
+        }
+        function misses(p, p2) {
+            var dist = distance(p, p2);
+            var misses = dist > _behavior.minDistance();
+            return misses;
+        }
+        function rand_within(a, b) {
+            return a + Math.random()*(b-a);
+        }
+        // calculate port positions
+        for(var nid in node_ports) {
+            var n = nodes[nid],
+                nports = node_ports[nid];
 
-    function norm(v) {
-        var len = Math.hypot(v[0], v[1]);
-        return [v[0]/len, v[1]/len];
-    }
-    function edge_vec(n, e) {
-        var dy = e.target.cola.y - e.source.cola.y,
-            dx = e.target.cola.x - e.source.cola.x;
-        if(e.source !== n)
-            dy = -dy, dx = -dx;
-        return norm([dx, dy]);
-    }
-    function is_ccw(u, v) {
-        return u[0]*v[1] - u[1]*v[0] > 0;
-    }
-    function in_bounds(v, bounds) {
-        // assume bounds are ccw
-        return is_ccw(bounds[0], v) && is_ccw(v, bounds[1]);
-    }
-    function clip(v, bounds) {
-        if(is_ccw(v, bounds[0]))
-            return bounds[0];
-        else if(is_ccw(bounds[1], v))
-            return bounds[1];
-        else return v;
-    }
-    function a_to_v(a) {
-        return [Math.cos(a), Math.sin(a)];
-    }
-    function v_to_a(v) {
-        return Math.atan2(v[1], v[0]);
-    }
-    // calculate port positions (currently very stupid)
-    for(var nid in node_ports) {
-        var n = nodes[nid],
-            nports = node_ports[nid];
-        nports.forEach(function(p) {
-            if(p.edges.length) {
-                var vecs = p.edges.map(edge_vec.bind(null, n));
-                p.vec = [
-                    d3.sum(vecs, function(v) { return v[0]; })/vecs.length,
-                    d3.sum(vecs, function(v) { return v[1]; })/vecs.length
-                ];
-            } else p.vec = p.vec || undefined;
-            if(p.orig) { // only specified ports have bounds
-                var bounds = diagram.portBounds.eval(p);
-                if(Array.isArray(bounds[0]))
-                    p.bounds = bounds;
-                else p.bounds = bounds.map(a_to_v);
-            }
-        });
-        var inside = [], outside = [], unplaced = [];
-        nports.forEach(function(p) {
-            if(!p.vec)
-                unplaced.push(p);
-            else if(p.bounds && !in_bounds(p.vec, p.bounds))
-               outside.push(p);
-            else
+            // make sure that we have vector and angle bounds for any ports with specification
+            nports.forEach(function(p) {
+                var bounds = p.orig && diagram.portBounds.eval(p) || [0, 2*Math.PI];
+                if(Array.isArray(bounds[0])) {
+                    p.vbounds = bounds;
+                    p.abounds = bounds.map(v_to_a);
+                }
+                else {
+                    p.vbounds = bounds.map(a_to_v);
+                    p.abounds = bounds;
+                }
+                if(p.abounds[0] > p.abounds[1])
+                    p.abounds[1] += 2*Math.PI;
+                console.assert(p.orig || p.vec, 'unplaced unspecified port');
+            });
+
+            // determine which ports satisfy bounds or are unplaced
+            var inside = [], outside = [], unplaced = [];
+            nports.forEach(function(p) {
+                if(!p.vec)
+                    unplaced.push(p);
+                else if(p.vbounds && !in_bounds(p.vec, p.vbounds))
+                    outside.push(p);
+                else
+                    inside.push(p);
+            });
+
+            // shunt outside ports into their bounds
+            outside.forEach(function(p) {
+                p.vec = clip(p.vec, p.vbounds);
                 inside.push(p);
-        });
+            });
 
-        // for now, just shunt outside ports into their bounds and then place unplaced
-        // would like to use 1D force directed here
-        outside.forEach(function(p) {
-            p.vec = clip(p.vec, p.bounds);
-            inside.push(p);
+            // for all unplaced ports that share a bounds, evenly distribute them within those bounds.
+            // assume that bounds are disjoint.
+            var boundses = {}, boundports = {};
+            unplaced.forEach(function(p) {
+                var boundskey = p.abounds.map(function(x) { return x.toFixed(3); }).join(',');
+                boundses[boundskey] = p.abounds;
+                boundports[boundskey] = boundports[boundskey] || [];
+                boundports[boundskey].push(p);
+            });
+            for(var b in boundports) {
+                var bounds = boundses[b], bports = boundports[b];
+                if(bports.length === 1)
+                    bports[0].vec = a_to_v((bounds[0] + bounds[1])/2);
+                else {
+                    var slice = (bounds[1] - bounds[0]) / (boundports[b].length - 1);
+                    boundports[b].forEach(function(p, i) {
+                        p.vec = a_to_v(bounds[0] + i*slice);
+                    });
+                }
+            }
+            inside = inside.concat(unplaced);
+            unplaced = [];
+
+            // determine positions of all satisfied
+            inside.forEach(function(p) {
+                project_port(diagram, n, p);
+            });
+
+            // detect any existing collisions, unplace the one without edges or second one
+            for(var i = 0; i < inside.length; ++i) {
+                var x = inside[i];
+                if(unplaced.includes(x))
+                    continue;
+                for(var j = i+1; j < inside.length; ++j) {
+                    var y = inside[j];
+                    if(unplaced.includes(y))
+                        continue;
+                    if(!misses(x, y)) {
+                        if(!x.edges.length) {
+                            unplaced.push(x);
+                            continue;
+                        }
+                        else
+                            unplaced.push(y);
+                    }
+                }
+            }
+            inside = inside.filter(function(p) { return !unplaced.includes(p); });
+
+            // place any remaining by trying random spots within the range until it misses all or we give up
+            var patience = _behavior.patience(), maxdist = 0, maxvec;
+            while(unplaced.length) {
+                var p = unplaced[0];
+                p.vec = a_to_v(rand_within(p.abounds[0], p.abounds[1]));
+                project_port(diagram, n, p);
+                var mindist = d3.min(inside, function(p2) { return distance(p, p2); });
+                if(mindist > maxdist) {
+                    maxdist = mindist;
+                    maxvec = p.vec;
+                }
+                if(!patience-- || mindist > _behavior.minDistance()) {
+                    if(patience<0) {
+                        console.warn('ran out of patience placing a port');
+                        p.vec = maxvec;
+                        project_port(diagram, n, p);
+                    }
+                    inside.push(p);
+                    unplaced.shift();
+                    patience = _behavior.patience();
+                    maxdist = 0;
+                }
+            }
+        }
+    };
+    var _behavior = {
+        parent: property(null).react(function(p) {
+            if(p) {
+                p.on('receivedLayout.place-ports', received_layout);
+            } else if(_behavior.parent())
+                _behavior.parent().on('receivedLayout.place-ports', null);
+        }),
+        // minimum distance between ports
+        minDistance: property(20),
+        // number of random places to try when resolving collision
+        patience: property(20)
+    };
+
+    return _behavior;
+};
+
+dc_graph.troubleshoot = function() {
+    var _debugLayer = null;
+
+    function add_behavior(chart, node, edge, ehover) {
+        if(!_debugLayer)
+            _debugLayer = chart.g().append('g').attr({
+                class: 'draw-graphs',
+                'pointer-events': 'none'
+            });
+        var centers = node.data().map(function(n) {
+            return {
+                x: n.cola.x,
+                y: n.cola.y
+            };
         });
-        // place the rest randomly within their bounds
-        unplaced.forEach(function(p) {
-            var bang = p.bounds.map(v_to_a);
-            if(bang[0] > bang[1])
-                bang[1] += 2*Math.PI;
-            p.vec = a_to_v(bang[0] + Math.random()*(bang[1] - bang[0]));
+        var crosshairs = _debugLayer.selectAll('path.nodecenter').data(centers);
+        crosshairs.exit().remove();
+        crosshairs.enter().append('path').attr('class', 'nodecenter');
+        crosshairs.attr({
+            d: function(d) {
+                return 'M' + (d.x - _behavior.xhairWidth()/2) + ',' + d.y + ' h' + _behavior.xhairWidth() +
+                    ' M' + d.x + ',' + (d.y - _behavior.xhairHeight()/2) + ' v' + _behavior.xhairHeight();
+            },
+            opacity: _behavior.xhairOpacity() !== null ? _behavior.xhairOpacity() : _behavior.opacity(),
+            stroke: _behavior.xhairColor()
         });
-        nports.forEach(function(p) {
-            p.pos = diagram.shape(n.dcg_shape.shape).intersect_vec(n, p.vec[0]*1000, p.vec[1]*1000);
+        var boundaries = node.data().map(function(n) {
+            return {
+                left: n.cola.x - n.cola.width/2,
+                top: n.cola.y - n.cola.height/2,
+                right: n.cola.x + n.cola.width/2,
+                bottom: n.cola.y + n.cola.height/2
+            };
+        });
+        function bound_tick(x, y, dx, dy) {
+            return 'M' + x + ',' + (y + dy) + ' v' + -dy + ' h' + dx;
+        }
+        var nodebounds = _debugLayer.selectAll('path.nodebounds').data(boundaries);
+        nodebounds.exit().remove();
+        nodebounds.enter().append('path').attr('class', 'nodebounds');
+        nodebounds.attr({
+            d: function(d) {
+                return [
+                    bound_tick(d.left, d.top, _behavior.boundsWidth(), _behavior.boundsHeight()),
+                    bound_tick(d.right, d.top, -_behavior.boundsWidth(), _behavior.boundsHeight()),
+                    bound_tick(d.right, d.bottom, -_behavior.boundsWidth(), -_behavior.boundsHeight()),
+                    bound_tick(d.left, d.bottom, _behavior.boundsWidth(), -_behavior.boundsHeight()),
+                ].join(' ');
+            },
+            opacity: _behavior.boundsOpacity() !== null ? _behavior.boundsOpacity() : _behavior.opacity(),
+            stroke: _behavior.boundsColor(),
+            fill: 'none'
         });
     }
 
-    // propagate port positions to edge endpoints
-    wedges.forEach(function(e) {
-        var name = diagram.edgeSourcePortName.eval(e);
-        e.sourcePort.pos = name ? ports[port_name(diagram.nodeKey.eval(e.source), null, name)].pos :
-            ports[port_name(null, diagram.edgeKey.eval(e), 'source')].pos;
-        name = diagram.edgeTargetPortName.eval(e);
-        e.targetPort.pos = name ? ports[port_name(diagram.nodeKey.eval(e.target), null, name)].pos :
-            ports[port_name(null, diagram.edgeKey.eval(e), 'target')].pos;
+    function remove_behavior(chart, node, edge, ehover) {
+        if(_debugLayer)
+            _debugLayer.remove();
+    }
+
+    var _behavior = dc_graph.behavior('highlight-paths', {
+        laterDraw: true,
+        add_behavior: add_behavior,
+        remove_behavior: remove_behavior
     });
-    return node_ports;
+    _behavior.opacity = property(0.75);
+
+    _behavior.xhairOpacity = property(null);
+    _behavior.xhairWidth = property(10);
+    _behavior.xhairHeight = property(10);
+    _behavior.xhairColor = property('blue');
+
+    _behavior.boundsOpacity = property(null);
+    _behavior.boundsWidth = property(10);
+    _behavior.boundsHeight = property(10);
+    _behavior.boundsColor = property('green');
+
+    return _behavior;
+};
+
+
+dc_graph.validate = function() {
+    function falsy(objects, accessor, what, who) {
+        var f = objects.filter(function(o) {
+            return !accessor(o);
+        });
+        return f.length ?
+            [what + ' is empty for ' + f.length + ' of ' + objects.length + ' ' + who, f] :
+            null;
+    }
+    function build_index(objects, accessor) {
+        return objects.reduce(function(m, o) {
+            m[accessor(o)] = o;
+            return m;
+        }, {});
+    }
+    function not_found(index, objects, accessor, what, where, who) {
+        var nf = objects.filter(function(o) {
+            return !index[accessor(o)];
+        }).map(function(o) {
+            return {key: accessor(o), value: o};
+        });
+        return nf.length ?
+            [what + ' was not found in ' + where + ' for ' + nf.length + ' of ' + objects.length + ' ' + who, nf] :
+            null;
+    }
+    function validate() {
+        var diagram = _behavior.parent();
+        var nodes = diagram.nodeGroup().all(),
+            edges = diagram.edgeGroup().all(),
+            ports = diagram.portGroup() ? diagram.portGroup().all() : [];
+        var errors = [];
+
+        function check(error) {
+            if(error)
+                errors.push(error);
+        }
+
+        check(falsy(nodes, diagram.nodeKey(), 'nodeKey', 'nodes'));
+        check(falsy(edges, diagram.edgeSource(), 'edgeSource', 'edges'));
+        check(falsy(edges, diagram.edgeTarget(), 'edgeTarget', 'edges'));
+
+        var nindex = build_index(nodes, diagram.nodeKey()),
+            eindex = build_index(edges, diagram.edgeKey());
+        check(not_found(nindex, edges, diagram.edgeSource(), 'edgeSource', 'nodes', 'edges'));
+        check(not_found(nindex, edges, diagram.edgeTarget(), 'edgeTarget', 'nodes', 'edges'));
+
+        check(falsy(ports, function(p) {
+            return diagram.portNodeKey() && diagram.portNodeKey()(p) ||
+                diagram.portEdgeKey() && diagram.portEdgeKey()(p);
+        }, 'portNodeKey||portEdgeKey', 'ports'));
+
+        var named_ports = !diagram.portNodeKey() && [] || ports.filter(function(p) {
+            return diagram.portNodeKey()(p);
+        });
+        var anonymous_ports = !diagram.portEdgeKey() && [] || ports.filter(function(p) {
+            return diagram.portEdgeKey()(p);
+        });
+        check(not_found(nindex, named_ports, diagram.portNodeKey(), 'portNodeKey', 'nodes', 'ports'));
+        check(not_found(eindex, anonymous_ports, diagram.portEdgeKey(), 'portEdgeKey', 'edges', 'ports'));
+
+        function count_text() {
+            return nodes.length + ' nodes, ' + edges.length + ' edges, ' + ports.length + ' ports';
+        }
+        if(errors.length) {
+            console.warn('validation failed with ' + count_text() + ':');
+            errors.forEach(function(err) {
+                console.warn.apply(null, err);
+            });
+        }
+        console.log('validation succeeded with ' + count_text() + '.');
+    }
+    var _behavior = {
+        parent: property(null).react(function(p) {
+            p.on('preDraw', validate);
+        })
+    };
+
+    return _behavior;
 };
 
 /**
@@ -5614,6 +6009,8 @@ dc_graph.select_things = function(things_group, things_name, thinginess) {
         thinginess.applyStyles(condition);
 
         thinginess.clickables(chart, node, edge).on('click.' + things_name, function(d) {
+            if(thinginess.excludeClick && thinginess.excludeClick(d3.event.target))
+                return;
             var key = thinginess.key(d), newSelected;
             if(_behavior.multipleSelect()) {
                 if(isUnion(d3.event))
@@ -5663,7 +6060,8 @@ dc_graph.select_things = function(things_group, things_name, thinginess) {
                     .on('brushstart.' + things_name, brushstart)
                     .on('brushmove.' + things_name, brushmove);
             }
-        }
+        },
+        laterDraw: thinginess.laterDraw || false
     });
 
     _behavior.multipleSelect = property(true);
@@ -5693,6 +6091,13 @@ dc_graph.select_things_group = function(brushgroup, type) {
 
 dc_graph.select_nodes = function(props) {
     var select_nodes_group = dc_graph.select_things_group('select-nodes-group', 'select-nodes');
+
+    // https://stackoverflow.com/questions/16863917/check-if-class-exists-somewhere-in-parent-vanilla-js
+    function ancestor_has_class(element, classname) {
+        if(d3.select(element).classed(classname))
+            return true;
+        return element.parentElement && ancestor_has_class(element.parentElement, classname);
+    }
     var thinginess = {
         intersectRect: function(ext) {
             return _behavior.parent().selectAllNodes().data().filter(function(n) {
@@ -5702,6 +6107,9 @@ dc_graph.select_nodes = function(props) {
         },
         clickables: function(chart, node, edge) {
             return node;
+        },
+        excludeClick: function(element) {
+            return ancestor_has_class(element, 'port');
         },
         key: function(d) {
             return _behavior.parent().nodeKey.eval(d);
@@ -5757,6 +6165,7 @@ dc_graph.select_edges = function(props) {
 dc_graph.select_ports = function(props) {
     var select_ports_group = dc_graph.select_things_group('select-ports-group', 'select-ports');
     var thinginess = {
+        laterDraw: true,
         intersectRect: null, // multiple selection not supported for now
         clickables: function() {
             return _behavior.parent().selectAllNodes('g.port');
@@ -5913,6 +6322,9 @@ dc_graph.fix_nodes = function(options) {
         targetid: function(e) {
             return _behavior.parent().edgeTarget.eval(e);
         },
+        get_fix: function(n) {
+            return _behavior.parent().nodeFixed.eval(n);
+        },
         fix_node: function(n, pos) {
             n[_fixedPosTag] = pos;
         },
@@ -5987,6 +6399,23 @@ dc_graph.fix_nodes = function(options) {
         });
         return Promise.all(promises);
     }
+    function fix_all_nodes(tell) {
+        if(tell === undefined)
+           tell = true;
+        var changes = _wnodes.map(function(n) {
+            return {n: n, fixed: {x: n.cola.x, y: n.cola.y}};
+        });
+        if(tell)
+            return tell_then_set(changes);
+        else {
+            set_changes(changes);
+            return Promise.resolve(undefined);
+        }
+    }
+    function clear_fixes() {
+        _behavior.strategy().clear_all_fixes && _behavior.strategy().clear_all_fixes();
+        _execute.clear_fixes();
+    }
     function on_data(diagram, nodes, wnodes, edges, wedges, ports, wports) {
         _nodes = nodes;
         _wnodes = wnodes;
@@ -5998,7 +6427,7 @@ dc_graph.fix_nodes = function(options) {
             set_changes(changes);
             // can't wait for backend to acknowledge/approve so just set then blast
             if(_behavior.reportOverridesAsynchronously())
-                tell_changes(find_changes()); // dangling promise
+                tell_changes(changes); // dangling promise
         }
     }
 
@@ -6015,6 +6444,10 @@ dc_graph.fix_nodes = function(options) {
         }),
         // callback for setting & fixing node position
         fixNode: property(null),
+        // save/load may want to nail everything / start from scratch
+        // (should probably be automatic though)
+        fixAllNodes: fix_all_nodes,
+        clearFixes: clear_fixes,
         strategy: property(dc_graph.fix_nodes.strategy.fix_last()),
         reportOverridesAsynchronously: property(true)
     };
@@ -6044,6 +6477,9 @@ dc_graph.fix_nodes.strategy.last_N_per_component = function(N) {
     var _age = 0;
     var _allFixes = {};
     return {
+        clear_all_fixes: function() {
+            _allFixes = {};
+        },
         request_fixes: function(exec, fixes) {
             ++_age;
             fixes.forEach(function(fix) {
@@ -6058,6 +6494,12 @@ dc_graph.fix_nodes.strategy.last_N_per_component = function(N) {
         new_edge: function() {},
         on_data: function(exec, nodes, wnodes, edges, wedges, ports, wports) {
             ++_age;
+            // add any existing fixes as requests
+            wnodes.forEach(function(n) {
+                var nid = exec.nodeid(n), pos = exec.get_fix(n);
+                if(pos && !_allFixes[nid])
+                    _allFixes[nid] = {id: nid, age: _age, pos: pos};
+            });
             var components = [];
             var dfs = dc_graph.undirected_dfs({
                 nodeid: exec.nodeid,
@@ -7109,10 +7551,11 @@ dc_graph.draw_graphs = function(options) {
 
 
 dc_graph.match_ports = function(diagram, symbolPorts) {
-    var _ports, _wports, _validTargets;
+    var _ports, _wports, _wedges, _validTargets;
     diagram.on('data', function(diagram, nodes, wnodes, edges, wedges, ports, wports) {
         _ports = ports;
         _wports = wports;
+        _wedges = wedges;
     });
     function change_state(ports, state) {
         return ports.map(function(p) {
@@ -7126,12 +7569,27 @@ dc_graph.match_ports = function(diagram, symbolPorts) {
         nids.push(diagram.portNodeKey.eval(source.port));
         symbolPorts.animateNodes(nids);
     }
+    function is_valid(sourcePort, targetPort) {
+        return (_behavior.allowParallel() || !_wedges.some(function(e) {
+            return sourcePort.edges.indexOf(e) >= 0 && targetPort.edges.indexOf(e) >= 0;
+        })) && _behavior.isValid()(sourcePort, targetPort);
+    }
     var _behavior = {
         isValid: property(function(sourcePort, targetPort) {
             return targetPort !== sourcePort && targetPort.name === sourcePort.name;
         }),
+        allowParallel: property(false),
+        hoverPort: function(port) {
+            if(port) {
+                _validTargets = _wports.filter(is_valid.bind(null, port));
+                if(_validTargets.length)
+                    return change_state(_validTargets, 'shimmer-medium');
+            } else if(_validTargets)
+                return change_state(_validTargets, 'small');
+            return null;
+        },
         startDragEdge: function(source) {
-            _validTargets = _wports.filter(_behavior.isValid().bind(null, source.port));
+            _validTargets = _wports.filter(is_valid.bind(null, source.port));
             var nids = change_state(_validTargets, 'shimmer');
             if(_validTargets.length) {
                 symbolPorts.enableHover(false);
@@ -7143,7 +7601,7 @@ dc_graph.match_ports = function(diagram, symbolPorts) {
             return _validTargets.length !== 0;
         },
         changeDragTarget: function(source, target) {
-            var nids, valid = target && _behavior.isValid()(source.port, target.port), before;
+            var nids, valid = target && is_valid(source.port, target.port), before;
             if(valid) {
                 nids = change_state(_validTargets, 'small');
                 target.port.state = 'large'; // it's one of the valid
@@ -7159,7 +7617,7 @@ dc_graph.match_ports = function(diagram, symbolPorts) {
         finishDragEdge: function(source, target) {
             symbolPorts.enableHover(true);
             reset_ports(source);
-            return _behavior.isValid()(source.port, target.port);
+            return is_valid(source.port, target.port);
         },
         cancelDragEdge: function(source) {
             symbolPorts.enableHover(true);
@@ -7173,10 +7631,7 @@ dc_graph.match_ports = function(diagram, symbolPorts) {
 dc_graph.symbol_port_style = function() {
     var _style = {};
     var _nodePorts, _node;
-    var _d3tip = d3.tip()
-            .attr('class', 'd3-tip')
-            .html(function(d) { return "<span>" + d + "</span>"; })
-            .direction('w');
+    var _drawConduct;
 
     _style.symbolScale = property(d3.shuffle(d3.scale.ordinal().range(d3.svg.symbolTypes)));
     _style.colorScale = property(d3.scale.ordinal().range(
@@ -7187,37 +7642,39 @@ dc_graph.symbol_port_style = function() {
     function name_or_edge(p) {
         return p.named ? p.name : _style.parent().edgeKey.eval(p.edges[0]);
     }
-    _style.portSymbol = property(name_or_edge, false); // non standard properties taking "outer datum"
-    _style.portColor = property(name_or_edge, false);
-    _style.portRadius = property(7);
-    _style.portHoverNodeRadius = property(10);
-    _style.portHoverPortRadius = property(14);
-    _style.portDisplacement = property(2);
-    _style.portBackground = property(true);
-    _style.portBackgroundScale = property(null);
-    _style.portBackgroundFill = property(null);
-    _style.portBackgroundStroke = property('black');
-    _style.portBackgroundStrokeWidth = property(1);
-    _style.portPadding = property(2);
-    _style.portLabel = _style.portText = property(function(p) {
+    _style.symbol = _style.portSymbol = property(name_or_edge, false); // non standard properties taking "outer datum"
+    _style.color = _style.portColor = property(name_or_edge, false);
+    _style.outline = property(dc_graph.symbol_port_style.outline.circle());
+    _style.smallRadius = _style.portRadius = property(7);
+    _style.mediumRadius = _style.portHoverNodeRadius = property(10);
+    _style.largeRadius = _style.portHoverPortRadius = property(14);
+    _style.displacement = _style.portDisplacement = property(2);
+    _style.outlineFillScale = _style.portBackgroundScale = property(null);
+    _style.outlineFill = _style.portBackgroundFill = property(null);
+    _style.outlineStroke = _style.portBackgroundStroke = property(null);
+    _style.outlineStrokeWidth = _style.portBackgroundStrokeWidth = property(null);
+    _style.padding = _style.portPadding = property(2);
+    _style.label = _style.portLabel = _style.portText = property(function(p) {
         return p.name;
     });
     _style.portLabelPadding = property({x: 5, y: 5});
     _style.cascade = cascade(_style);
 
     function symbol_fill(d) {
-        return _style.colorScale()(_style.portColor.eval(d));
+        var symcolor = _style.color.eval(d);
+        return symcolor ? _style.colorScale()(symcolor) : 'none';
     }
     function port_transform(d) {
         var l = Math.hypot(d.pos.x, d.pos.y),
             u = {x: d.pos.x / l, y: d.pos.y / l},
-            disp = _style.portDisplacement.eval(d),
+            disp = _style.displacement.eval(d),
             pos = {x: d.pos.x + disp * u.x, y: d.pos.y + disp * u.y};
         return 'translate(' + pos.x + ',' + pos.y + ')';
     }
     function port_symbol(d, size) {
-        return d3.svg.symbol()
-            .type(_style.symbolScale()(_style.portSymbol.eval(d)))
+        var symname = _style.symbol.eval(d);
+        return symname && d3.svg.symbol()
+            .type(_style.symbolScale()(symname))
             .size(size*size)
         ();
     }
@@ -7227,26 +7684,38 @@ dc_graph.symbol_port_style = function() {
     function hover_radius(d) {
         switch(d.state) {
         case 'large':
-            return _style.portHoverPortRadius.eval(d);
+            return _style.largeRadius.eval(d);
         case 'medium':
-            return _style.portHoverNodeRadius.eval(d);
+            return _style.mediumRadius.eval(d);
         case 'small':
         default:
-            return _style.portRadius.eval(d);
+            return _style.smallRadius.eval(d);
         }
     }
-    // fall back to node fill if portBackgroundFill not specified
-    function background_fill(p) {
+    function shimmer_radius(d) {
+        return /-medium$/.test(d.state) ?
+            _style.mediumRadius.eval(d) :
+            _style.largeRadius.eval(d);
+    }
+    // fall back to node aesthetics if not defined for port
+    function outline_fill(p) {
         var scale, fill;
-        if(_style.portBackgroundFill.eval(p)) {
-            scale = _style.portBackgroundScale() || identity;
-            fill = _style.portBackgroundFill.eval(p);
+        if(_style.outlineFill.eval(p)) {
+            scale = _style.outlineFillScale() || identity;
+            fill = _style.outlineFill.eval(p);
         }
         else {
             scale = _style.parent().nodeFillScale() || identity;
             fill = _style.parent().nodeFill.eval(p.node);
         }
-        return scale(fill);
+        return fill === 'none' ? 'none' : scale(fill);
+    }
+    function outline_stroke(p) {
+        return _style.outlineStroke.eval(p) || _style.parent().nodeStroke.eval(p.node);
+    }
+    function outline_stroke_width(p) {
+        var sw = _style.outlineStrokeWidth.eval(p);
+        return typeof sw === 'number' ? sw : _style.parent().nodeStrokeWidth.eval(p.node);
     }
     _style.animateNodes = function(nids, before) {
         var setn = d3.set(nids);
@@ -7255,8 +7724,8 @@ dc_graph.symbol_port_style = function() {
                     return setn.has(_style.parent().nodeKey.eval(d));
                 });
         var symbol = node.selectAll('g.port');
-        var shimmer = symbol.filter(function(p) { return p.state === 'shimmer'; }),
-            nonshimmer = symbol.filter(function(p) { return p.state !== 'shimmer'; });
+        var shimmer = symbol.filter(function(p) { return /^shimmer/.test(p.state); }),
+            nonshimmer = symbol.filter(function(p) { return !/^shimmer/.test(p.state); });
         if(shimmer.size()) {
             if(before)
                 before.each('end', repeat);
@@ -7267,27 +7736,27 @@ dc_graph.symbol_port_style = function() {
             var shimin = shimmer.transition()
                     .duration(1000)
                     .ease("bounce");
-            shimin.selectAll('circle.port')
-                .attr('r', function(d) {
-                    return _style.portHoverPortRadius.eval(d) + _style.portPadding.eval(d);
-                });
-            shimin.selectAll('path.port')
+            shimin.selectAll('.port-outline')
+                .call(_style.outline().draw(function(d) {
+                    return shimmer_radius(d) + _style.portPadding.eval(d);
+                }));
+            shimin.selectAll('path.port-symbol')
                 .attr({
                     d: function(d) {
-                        return port_symbol(d, _style.portHoverPortRadius.eval(d));
+                        return port_symbol(d, shimmer_radius(d));
                     }
                 });
             var shimout = shimin.transition()
                     .duration(1000)
                     .ease('sin');
-            shimout.selectAll('circle.port')
-                .attr('r', function(d) {
-                    return _style.portRadius.eval(d) + _style.portPadding.eval(d);
-                });
-            shimout.selectAll('path.port')
+            shimout.selectAll('.port-outline')
+                .call(_style.outline().draw(function(d) {
+                    return _style.smallRadius.eval(d) + _style.portPadding.eval(d);
+                }));
+            shimout.selectAll('path.port-symbol')
                 .attr({
                     d: function(d) {
-                        return port_symbol(d, _style.portRadius.eval(d));
+                        return port_symbol(d, _style.smallRadius.eval(d));
                     }
                 });
             shimout.each("end", repeat);
@@ -7295,13 +7764,11 @@ dc_graph.symbol_port_style = function() {
 
         var trans = nonshimmer.transition()
                 .duration(250);
-        trans.selectAll('circle.port')
-            .attr({
-                r: function(d) {
-                    return hover_radius(d) + _style.portPadding.eval(d);
-                }
-            });
-        trans.selectAll('path.port')
+        trans.selectAll('.port-outline')
+            .call(_style.outline().draw(function(d) {
+                return hover_radius(d) + _style.portPadding.eval(d);
+            }));
+        trans.selectAll('path.port-symbol')
             .attr({
                 d: function(d) {
                     return port_symbol(d, hover_radius(d));
@@ -7311,7 +7778,7 @@ dc_graph.symbol_port_style = function() {
         function text_showing(d) {
             return d.state === 'large' || d.state === 'medium';
         }
-        trans.selectAll('text.port')
+        trans.selectAll('text.port-label')
             .attr({
                 opacity: function(d) {
                     return text_showing(d) ? 1 : 0;
@@ -7320,17 +7787,23 @@ dc_graph.symbol_port_style = function() {
                     return text_showing(d) ? 'auto' : 'none';
                 }
             });
-        trans.selectAll('rect.port')
+        trans.selectAll('rect.port-label-background')
             .attr('opacity', function(p) {
                 return text_showing(p) ? 1 : 0;
             });
         // bring all nodes which have labels showing to the front
         _node.filter(function(n) {
-            return _nodePorts[_style.parent().nodeKey.eval(n)].some(text_showing);
-        }).each(function(){
+            var ports = _nodePorts[_style.parent().nodeKey.eval(n)];
+            return ports && ports.some(text_showing);
+        }).each(function() {
             this.parentNode.appendChild(this);
         });
-
+        // bring all active ports to the front
+        symbol.filter(function(p) {
+            return p.state !== 'small';
+        }).each(function() {
+            this.parentNode.appendChild(this);
+        });
         return trans;
     };
     _style.eventPort = function() {
@@ -7357,64 +7830,69 @@ dc_graph.symbol_port_style = function() {
                 transform: port_transform
             });
 
-        var background = port.selectAll('circle.port').data(function(p) {
-            return _style.portBackground.eval(p) ? [p] : [];
+        var outline = port.selectAll('.port-outline').data(function(p) {
+            return outline_fill(p) !== 'none' ? [p] : [];
         });
-        background.exit().remove();
-        background.enter().append('circle')
+        outline.exit().remove();
+        var outlineEnter = outline.enter().append(_style.outline().tag())
             .attr({
-                class: 'port',
-                r: function(d) {
-                    return _style.portRadius.eval(d) + _style.portPadding.eval(d);
-                },
-                fill: background_fill,
-                'stroke-width': _style.portBackgroundStrokeWidth.eval,
-                stroke: _style.portBackgroundStroke.eval
+                class: 'port-outline',
+                fill: outline_fill,
+                'stroke-width': outline_stroke_width,
+                stroke: outline_stroke
             });
-        background.transition()
+        if(_style.outline().init)
+            outlineEnter.call(_style.outline().init);
+        outlineEnter
+            .call(_style.outline().draw(function(d) {
+                return _style.smallRadius.eval(d) + _style.portPadding.eval(d);
+            }));
+        // only position and size are animated (?) - anyway these are not on the node
+        // and they are typically used to indicate selection which should be fast
+        outline
+            .attr({
+                fill: outline_fill,
+                'stroke-width': outline_stroke_width,
+                stroke: outline_stroke
+            });
+        outline.transition()
             .duration(_style.parent().stagedDuration())
             .delay(_style.parent().stagedDelay(false)) // need to account for enters as well
-            .attr({
-                r: function(d) {
-                    return _style.portRadius.eval(d) + _style.portPadding.eval(d);
-                },
-                fill: background_fill,
-                'stroke-width': _style.portBackgroundStrokeWidth.eval,
-                stroke: _style.portBackgroundStroke.eval
-            });
+            .call(_style.outline().draw(function(d) {
+                return _style.smallRadius.eval(d) + _style.portPadding.eval(d);
+            }));
 
         var symbolEnter = portEnter.append('path')
                 .attr({
-                    class: 'port',
-                    fill: symbol_fill,
+                    class: 'port-symbol',
                     d: function(d) {
-                        return port_symbol(d,  _style.portRadius.eval(d));
+                        return port_symbol(d, _style.smallRadius.eval(d));
                     }
                 });
-        var symbol = port.select('path.port');
+        var symbol = port.select('path.port-symbol');
+        symbol.attr('fill', symbol_fill);
         symbol.transition()
             .duration(_style.parent().stagedDuration())
             .delay(_style.parent().stagedDelay(false)) // need to account for enters as well
             .attr({
-                fill: symbol_fill,
                 d: function(d) {
-                    return port_symbol(d, _style.portRadius.eval(d));
+                    return port_symbol(d, _style.smallRadius.eval(d));
                 }
             });
 
-        var label = port.selectAll('text.port').data(function(p) {
-            return _style.portText.eval(p) ? [p] : [];
+        var label = port.selectAll('text.port-label').data(function(p) {
+            return _style.portLabel.eval(p) ? [p] : [];
         });
         label.exit().remove();
         var labelEnter = label.enter();
         labelEnter.append('rect')
             .attr({
-                class: 'port',
+                class: 'port-label-background',
                 'pointer-events': 'none'
             });
         labelEnter.append('text')
             .attr({
-                class: 'port',
+                class: 'port-label',
                 'alignment-baseline': 'middle',
                 'pointer-events': 'none',
                 cursor: 'default',
@@ -7422,7 +7900,7 @@ dc_graph.symbol_port_style = function() {
             });
         label
             .each(function(p) {
-                p.offset = (is_left(p) ? -1 : 1) * (_style.portHoverPortRadius.eval(p) + _style.portPadding.eval(p));
+                p.offset = (is_left(p) ? -1 : 1) * (_style.largeRadius.eval(p) + _style.portPadding.eval(p));
             })
             .attr({
                 'text-anchor': function(d) {
@@ -7432,11 +7910,11 @@ dc_graph.symbol_port_style = function() {
                     return 'translate(' + p.offset + ',0)';
                 }
             })
-            .text(_style.portText.eval)
+            .text(_style.portLabel.eval)
             .each(function(p) {
                 p.bbox = this.getBBox();
             });
-        port.selectAll('rect.port')
+        port.selectAll('rect.port-label-background')
             .attr({
                 x: function(p) {
                     return (p.offset < 0 ? p.offset - p.bbox.width : p.offset) - _style.portLabelPadding.eval(p).x;
@@ -7458,21 +7936,34 @@ dc_graph.symbol_port_style = function() {
     };
 
     _style.enableHover = function(whether) {
+        if(!_drawConduct) {
+            if(_style.parent()) {
+                var draw = _style.parent().child('draw-graphs');
+                if(draw)
+                    _drawConduct = draw.conduct();
+            }
+        }
         if(whether) {
             _node.on('mouseover.grow-ports', function(d) {
                 var nid = _style.parent().nodeKey.eval(d);
                 var activePort = _style.eventPort();
-                _nodePorts[nid].forEach(function(p) {
-                    p.state = p === activePort ? 'large' : activePort ? 'small' : 'medium';
-                });
-                _style.animateNodes([nid]);
+                if(_nodePorts[nid])
+                    _nodePorts[nid].forEach(function(p) {
+                        p.state = p === activePort ? 'large' : activePort ? 'small' : 'medium';
+                    });
+                var nids = _drawConduct && _drawConduct.hoverPort(activePort) || [];
+                nids.push(nid);
+                _style.animateNodes(nids);
             });
             _node.on('mouseout.grow-ports', function(d) {
                 var nid = _style.parent().nodeKey.eval(d);
-                _nodePorts[nid].forEach(function(p) {
-                    p.state = 'small';
-                });
-                _style.animateNodes([nid]);
+                if(_nodePorts[nid])
+                    _nodePorts[nid].forEach(function(p) {
+                        p.state = 'small';
+                    });
+                var nids = _drawConduct && _drawConduct.hoverPort(null) || [];
+                nids.push(nid);
+                _style.animateNodes(nids);
             });
         } else {
             _node.on('mouseover.grow-ports', null);
@@ -7481,17 +7972,74 @@ dc_graph.symbol_port_style = function() {
         return _style;
     };
 
-    _style.showTip = function(port) {
-        _node
-            .filter(function(d) {
-                return port.node === d;
-            })
-            .call(_d3tip.show);
-        return _style;
-    };
-
     _style.parent = property(null);
     return _style;
+};
+
+dc_graph.symbol_port_style.outline = {};
+dc_graph.symbol_port_style.outline.circle = function() {
+    return {
+        tag: function() {
+            return 'circle';
+        },
+        draw: function(rf) {
+            return function(outlines) {
+                outlines.attr('r', function(p) { return rf(p); });
+            };
+        }
+    };
+};
+dc_graph.symbol_port_style.outline.square = function() {
+    return {
+        tag: function() {
+            return 'rect';
+        },
+        init: function(outlines) {
+            // crispEdges can make outline off-center from symbols
+            // outlines.attr('shape-rendering', 'crispEdges');
+        },
+        draw: function(rf) {
+            return function(outlines) {
+                outlines.attr({
+                    x: function(p) { return -rf(p); },
+                    y: function(p) { return -rf(p); },
+                    width: function(p) { return 2*rf(p); },
+                    height: function(p) { return 2*rf(p); }
+                });
+            };
+        }
+    };
+};
+dc_graph.symbol_port_style.outline.arrow = function() {
+    // offset needed for body in order to keep centroid at 0,0
+    var left_portion = 3/4 - Math.PI/8;
+    var _outline = {
+        tag: function() {
+            return 'path';
+        },
+        init: function(outlines) {
+            //outlines.attr('shape-rendering', 'crispEdges');
+        },
+        draw: function(rf) {
+            return function(outlines) {
+                outlines.attr('d', function(p) {
+                    var r = rf(p);
+                    if(!_outline.outie() || _outline.outie()(p.orig))
+                        return 'M' + -left_portion*r + ',' + -r + ' h' + r +
+                        ' l' + r + ',' + r + ' l' + -r + ',' + r +
+                        ' h' + -r +
+                        ' a' + r + ',' + r + ' 0 1,1 0,' + -2*r;
+                    else
+                        return 'M' + -(2-left_portion)*r + ',' + -r + ' h' + 2*r +
+                        ' a' + r + ',' + r + ' 0 1,1 0,' + 2*r +
+                        ' h' + -2*r +
+                        ' l' + r + ',' + -r + ' l' + -r + ',' + -r;
+                });
+            };
+        },
+        outie: property(null)
+    };
+    return _outline;
 };
 
 function process_dot(callback, error, text) {
