@@ -1,18 +1,47 @@
 dc_graph.flexbox_layout = function(id) {
     var _layoutId = id || uuid();
-    var graphviz = dc_graph.graphviz_attrs(), graphviz_keys = Object.keys(graphviz);
-    graphviz.rankdir(null);
+
+    var _tree, _nodes = {};
 
     function init(options) {
     }
+    // like d3.nest but address can be of arbitrary (and different) length
+    // probably less efficient too
+    function add_node(adhead, adtail, n, tree) {
+        tree.address = adhead.slice();
+        tree.children = tree.children || {};
+        if(!adtail.length) {
+            tree.node = n;
+            return;
+        }
+        var t = tree.children[adtail[0]] = tree.children[adtail[0]] || {};
+        adhead.push(adtail.shift());
+        add_node(adhead, adtail, n, t);
+    }
+    function all_keys(tree) {
+        var key = _engine.addressToKey(tree.address);
+        return Array.prototype.concat.apply([key], Object.keys(tree.children).map(function(k) {
+            return all_keys(tree.children[k]);
+        }));
+    }
     function data(nodes) {
+        _tree = {};
+        nodes.forEach(function(n) {
+            var ad = _engine.nodeAddress.eval(n);
+            add_node([], ad, n, _tree);
+        });
+        var need = all_keys(_tree);
+        var wnodes = regenerate_objects(_nodes, nodes, need, function(n) {
+            return n.dcg_nodeKey;
+        }, function(n1, n) {
+        });
     }
     function start() {
     }
     function stop() {
     }
 
-    var engine = Object.assign(graphviz, {
+    var _engine = Object.assign(graphviz, {
         layoutAlgorithm: function() {
             return 'cola';
         },
@@ -50,8 +79,12 @@ dc_graph.flexbox_layout = function(id) {
             return []
                 .concat(graphviz_keys);
         },
-        populateLayoutNode: function() {},
-        populateLayoutEdge: function() {}
+        populateLayoutNode: function() {
+        },
+        populateLayoutEdge: function() {},
+        nodeAddress: property(function(n) { return n.value.address; }),
+        addressToKey: property(function(ad) { return ad.join(','); }),
+        keyToAddress: property(function(nid) { return nid.split(','); })
     });
     return engine;
 };
